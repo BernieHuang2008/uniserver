@@ -54,7 +54,7 @@ class EncryptionKey:
         ciphertext = decoded_data[160:]
         
         # Decrypt the AES key using the RSA private key
-        aes_key = rsa.decrypt(encrypted_key, self._private_key)
+        aes_key = rsa.decrypt(encrypted_key, self._private_key)     # TODO: Decrypt failed
         
         # Create a new AES cipher using the decrypted AES key and the nonce
         cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)

@@ -5,6 +5,18 @@ import socket
 import enc
 
 
+services = {
+    'service_name': {
+        'name': 'service_name',
+        'addr': '',
+        'socket': None,
+        'key': [None, None],    # [my key, client key]
+        'send': None,
+        'recv': None,
+    }
+}
+
+
 def start():
     # start a TCP server
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -14,6 +26,7 @@ def start():
 
     while True:
         client, address = server.accept()  # Accept a client connection
+        address = address[0]+':'+str(address[1])
         # change to a different thread
         thread = threading.Thread(target=handle_client, args=(client, address))
         thread.start()
@@ -21,6 +34,15 @@ def start():
 
 def handshake(client, address):
     """
+      IMEC Server (this)                  IMEC Client
+    1.        --------- Welcom Message --------> 
+    2.        <-------- Welcom Response --------
+    3.        --------- Handshake Message ----->
+    4.        <-------- Handshake Response -----
+    5.        --------------- OK -------------->
+    6.        <-------- Identity Response ------
+
+
     Error Codes:
       -1: Failed to receive data
       -2: Failed to decode json
@@ -65,40 +87,36 @@ def handshake(client, address):
 
     # send handshake
     client.send(b'{"type": "handshake", "key": "' +
-                key.get_public_key().save_pkcs1() + b'"}')
+                enc.base64(key.get_public_key().save_pkcs1()) + b'"}')
 
     # receive handshake response
     data = client.recv(1024)
     json_data = json.loads(data.decode('utf-8'))
     if json_data['type'] == 'handshake':
-        client_key = enc.EncryptionKey.load_public_key(json_data['key'])
+        client_key = enc.EncryptionKey.load_public_key(enc.invbase64(json_data['key']))
 
     return key, client_key
 
 
 def get_identity(recv, send):
-    send(b'{"type": "ok"}')
+    send('{"type": "ok", "msg": "starting identify progress", "code": 0}')
     data = recv()
     if data['type'] == 'identity':
         service_name = data['name']
-        pass  # TODO: check if the service is registered
-    else:
-        0/0
-
-
-def get_duty(recv, send):
-    send(b'{"type": "ok"}')
-    data = recv()
-    if data['type'] == 'duty':
-        if data['duty'] == 'subscribe':
-            return 'subscribe'
-        elif data['duty'] == 'send':
-            return 'send'
+        # TODO: check if the service is registered
+        send('{"type": "ok", "msg": "identify success", "code": 0}')
+        return service_name
     else:
         0/0
 
 
 def handle_client(client, address):
+    """
+    Error Codes:
+      * 0: OK
+      * 404: Target service not found
+
+    """
     print('\033[93m' + f' [*] New connection from {address}' + '\033[0m')
 
     mykey, ckey = handshake(client, address)
@@ -107,10 +125,35 @@ def handle_client(client, address):
         client.send(ckey.encrypt(data))
 
     def recv(maximun=1024):
-        return json.loads(mykey.decrypt(client.recv(maximun).decode('utf-8')))
+        return json.loads(mykey.decrypt(client.recv(maximun)))
 
     identity = get_identity(recv, send)
-    duty = get_duty(recv, send)
+
+    services[identity] = {
+        'name': identity,
+        'addr': address,
+        'socket': client,
+        'key': [mykey, ckey],
+        'send': send,
+        'recv': recv,
+    }
+
+    print('\033[92m' + f' [+] {address} is now {identity}' + '\033[0m')
+
+    while True:
+        data = recv()
+        if data['type'] == 'msg':
+            if 'to' in data and 'msg' in data:
+                if data['to'] not in services:
+                    send(
+                        '{"type": "error", "msg": "Target service not found", code: 404}')
+                    continue
+                else:
+                    t_send = services[data['to']]['send']
+                    msg = data['msg']
+                    t_send('{"type": "msg", "from": "{}", "msg": "{}"}'.format(
+                        identity, msg))
+                    send('{"type": "ok", code: 0}')
 
 
 if __name__ == '__main__':
