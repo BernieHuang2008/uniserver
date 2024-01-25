@@ -3,10 +3,14 @@ import base64 as b64
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 
+import rsa
+
 class EncryptionKey:
     def __init__(self, public_key, private_key=None):
         self.public_key = public_key
         self._private_key = private_key
+        self.chunk_size = (self.public_key.n.bit_length() + 7) // 8 - 11
+        self.enc_chunk_size = self.public_key.n.bit_length() // 8
 
     @classmethod
     def load_public_key(cls, public_key):
@@ -25,47 +29,35 @@ class EncryptionKey:
         if type(data) is not bytes:
             data = data.encode('utf-8')
 
-        # Generate a random AES key
-        aes_key = get_random_bytes(16)
-        
-        # Create a new AES cipher using the key
-        cipher = AES.new(aes_key, AES.MODE_EAX)
-        
-        # Encrypt the data using the AES cipher
-        ciphertext, tag = cipher.encrypt_and_digest(data)
-        
-        # Encrypt the AES key using the RSA public key
-        encrypted_key = rsa.encrypt(aes_key, self.public_key)
-        
-        # Return the encrypted AES key and the ciphertext
-        return b64.b64encode(encrypted_key + cipher.nonce + tag + ciphertext)
+        encrypted_data = b''
+
+        # Split the data into chunks and encrypt each chunk
+        for i in range(0, len(data), self.chunk_size):
+            chunk = data[i:i+self.chunk_size]
+            encrypted_chunk = rsa.encrypt(chunk, self.public_key)
+            encrypted_data += encrypted_chunk
+
+        return encrypted_data
     
     def decrypt(self, data) -> str:
         """
         Decrypt data with the private key, return the decrypted data.
         """
-        # Decode the data
-        decoded_data = b64.b64decode(data)
-        
-        # Extract the encrypted AES key, nonce, tag and ciphertext
-        encrypted_key = decoded_data[:128]
-        nonce = decoded_data[128:144]
-        tag = decoded_data[144:160]
-        ciphertext = decoded_data[160:]
-        
-        # Decrypt the AES key using the RSA private key
-        aes_key = rsa.decrypt(encrypted_key, self._private_key)
-        
-        # Create a new AES cipher using the decrypted AES key and the nonce
-        cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
-        
-        # Decrypt the ciphertext using the AES cipher and the tag
-        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
-        
-        return plaintext.encode('utf-8')
+        if type(data) is not bytes:
+            data = data.encode('utf-8')
+
+        decrypted_data = b''
+
+        # Split the data into chunks and decrypt each chunk
+        for i in range(0, len(data), self.enc_chunk_size):
+            chunk = data[i:i+self.enc_chunk_size]
+            decrypted_chunk = rsa.decrypt(chunk, self._private_key)
+            decrypted_data += decrypted_chunk
+
+        return decrypted_data.decode('utf-8')
 
 def generate_key():
-    keys = rsa.newkeys(2048)
+    keys = rsa.newkeys(512)
     return EncryptionKey(keys[0], keys[1])
 
 
