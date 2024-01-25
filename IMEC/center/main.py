@@ -1,6 +1,7 @@
 import threading
 import json
 import socket
+import hashlib
 
 import enc
 
@@ -15,6 +16,10 @@ services = {
         'recv': None,
     }
 }
+
+
+def getref(msg):
+    return hashlib.sha256(msg).hexdigest()[:6]
 
 
 def start():
@@ -124,8 +129,9 @@ def handle_client(client, address):
     def send(data):
         client.send(ckey.encrypt(data))
 
-    def recv(maximun=1024):
-        return json.loads(mykey.decrypt(client.recv(maximun)))
+    def recv(maximun=1024*1024):
+        raw_data = mykey.decrypt(client.recv(maximun))
+        return json.loads(raw_data)
 
     identity = get_identity(recv, send)
 
@@ -138,22 +144,22 @@ def handle_client(client, address):
         'recv': recv,
     }
 
-    print('\033[92m' + f' [+] {address} is now {identity}' + '\033[0m')
+    print('\033[92m' + f' [+] {address} is now registed as "{identity}"' + '\033[0m')
 
     while True:
         data = recv()
         if data['type'] == 'msg':
             if 'to' in data and 'msg' in data:
                 if data['to'] not in services:
-                    send(
-                        '{"type": "error", "msg": "Target service not found", code: 404}')
+                    ref = getref(data['msg'])
+                    msg = '{"type": "error", "reply": "'+ref+'", "msg": "Target service not found", code: 404}'
+                    send(msg)
                     continue
                 else:
                     t_send = services[data['to']]['send']
-                    msg = data['msg']
-                    t_send('{"type": "msg", "from": "{}", "msg": "{}"}'.format(
-                        identity, msg))
-                    send('{"type": "ok", code: 0}')
+                    data['from'] = identity     # just ensure
+                    msg = json.dumps(data)
+                    t_send(msg)
 
 
 if __name__ == '__main__':
